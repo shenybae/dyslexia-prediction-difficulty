@@ -1,41 +1,49 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import numpy as np
-import pandas as pd
+from flask import Flask, request, jsonify
 import pickle
+import pandas as pd
 
 # Load model, scaler, and label encoder
-model = pickle.load(open("best_mobile_dyslexia_model_20k.pkl", "rb"))
-scaler = pickle.load(open("best_mobile_dyslexia_model_20k_scaler.pkl", "rb"))
-label_encoder = pickle.load(open("best_mobile_dyslexia_model_20k_labels.pkl", "rb"))
+with open("model/best_mobile_dyslexia_model_20k.pkl", "rb") as f:
+    model = pickle.load(f)
+with open("model/best_mobile_dyslexia_model_20k_scaler.pkl", "rb") as f:
+    scaler = pickle.load(f)
+with open("model/best_mobile_dyslexia_model_20k_labels.pkl", "rb") as f:
+    label_encoder = pickle.load(f)
 
-app = FastAPI()
+app = Flask(__name__)
 
-# Allow Mobile App Access
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],   # Allow all mobile devices
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/")
+@app.route("/")
 def home():
-    return {"message": "Dyslexia Prediction API is Running!"}
+    return "Dyslexia Prediction API is running!"
 
-@app.post("/predict")
-def predict(data: dict):
-    # Convert JSON data into DataFrame
-    X = pd.DataFrame([data])
+@app.route("/predict", methods=["POST"])
+def predict():
+    data = request.get_json()
+    try:
+        # Expecting JSON with feature keys
+        features = [
+            'age', 'word_recognition_speed', 'letter_accuracy', 
+            'phoneme_matching', 'word_sequencing', 'reading_comprehension',
+            'working_memory_span', 'visual_processing_speed', 'spelling_recognition'
+        ]
+        
+        sample = pd.DataFrame([data])[features]
+        sample_scaled = scaler.transform(sample)
+        prediction = model.predict(sample_scaled)
+        predicted_class = label_encoder.inverse_transform(prediction)[0]
 
-    # Scale features before prediction
-    X_scaled = scaler.transform(X)
+        # Probability if available
+        probabilities = None
+        if hasattr(model, "predict_proba"):
+            prob = model.predict_proba(sample_scaled)[0]
+            probabilities = {label_encoder.classes_[i]: float(prob[i]) for i in range(len(prob))}
 
-    # Predict severity
-    prediction = model.predict(X_scaled)
-    difficulty_level = label_encoder.inverse_transform(prediction)[0]
+        return jsonify({
+            "predicted_class": predicted_class,
+            "probabilities": probabilities
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
 
-    return {
-        "difficulty_level": difficulty_level
-    }
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
